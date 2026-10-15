@@ -1,4 +1,4 @@
-import { bandAt, bands, ediBand } from './bands';
+import { bandAt, bandFrequencyMhz, bandNamed, bands, ediBand, ediFrequencyMhz } from './bands';
 import {
   supportedLogFormats,
   type LogInput,
@@ -199,6 +199,8 @@ function parseEdi(text: string): ParsedLog {
     const band = ediBand(h.PBAND);
     if (!band) throw new Error(`Unsupported EDI PBand value: "${h.PBAND}".`);
     common.BAND = band.name;
+    const frequency = ediFrequencyMhz(h.PBAND);
+    if (frequency) common.FREQ = frequency;
   }
   const records: LogRecord[] = [];
   let reading = false;
@@ -296,11 +298,13 @@ function validateRecords(records: LogRecord[]): void {
       throw new Error(`Invalid frequency in record ${index + 1}.`);
     }
     // Some exporters put a frequency in MHz in ADIF BAND instead of an ADIF band name.
+    let band = bandNamed(record.BAND?.trim() ?? '');
     if (record.BAND && !/[a-z]/i.test(record.BAND)) {
-      const band = bandAt(Number(record.BAND));
+      band = bandAt(Number(record.BAND));
       if (!band) throw new Error(`Unsupported ADIF band "${record.BAND}" in record ${index + 1}.`);
       record.BAND = band.name;
     }
+    if (!record.FREQ?.trim() && band) record.FREQ = bandFrequencyMhz(band, record.MODE);
   }
 }
 

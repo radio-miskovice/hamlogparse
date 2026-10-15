@@ -46,10 +46,25 @@ export function bandNamed(value: string): Band | undefined {
   return bands.find(({ name }) => name === value.toLowerCase());
 }
 
-export function ediBand(value: string): Band | undefined {
+export function bandFrequencyMhz(band: Band, mode = ''): string {
+  const normalizedMode = mode.trim().toUpperCase();
+  if (band.name === '80m') return ['SSB', 'LSB', 'USB'].includes(normalizedMode) ? '3.7' : '3.5';
+  if (band.name === '2m' && normalizedMode === 'FM') return '145';
+
+  const match = /^(\d+(?:\.\d+)?)\s*(MHz|GHz)$/i.exec(band.edi);
+  if (!match) throw new Error(`Invalid nominal frequency for band "${band.name}".`);
+  return String(Number(match[1]) * (match[2].toLowerCase() === 'ghz' ? 1000 : 1));
+}
+
+export function ediFrequencyMhz(value: string): string | undefined {
   const match = /^(\d+(?:[.,]\d+)?)\s*(MHz|GHz)?$/i.exec(value);
-  if (!match) return bandNamed(value);
-  return bandAt(
+  if (!match) return;
+  return String(
     Number(match[1].replace(',', '.')) * (match[2]?.toLowerCase() === 'ghz' ? 1000 : 1),
   );
+}
+
+export function ediBand(value: string): Band | undefined {
+  const frequency = ediFrequencyMhz(value);
+  return frequency === undefined ? bandNamed(value) : bandAt(Number(frequency));
 }

@@ -91,6 +91,7 @@ describe('log parsing', () => {
       'BAND',
       'CALL',
       'CONTEST_ID',
+      'FREQ',
       'GRIDSQUARE',
       'MODE',
       'QSO_DATE',
@@ -103,50 +104,54 @@ describe('log parsing', () => {
   });
 
   it.each([
-    ['50 MHz', '6m'],
-    ['144 MHz', '2m'],
-    ['145 MHz', '2m'],
-    ['435 MHz', '70cm'],
-    ['1.3 GHz', '23cm'],
-    ['10 GHz', '3cm'],
-    ['144', '2m'],
-    ['432', '70cm'],
-    ['1,3 GHz', '23cm'],
-  ])('copies EDI station headers and %s band into every contact', (band, expectedBand) => {
-    const edi = [
-      '[REG1TEST;1]',
-      'PCall=OK1KEO/P',
-      'PWWLo=JN79NU',
-      `PBand=${band}`,
-      '[QSORecords;2]',
-      '220703;0959;DL7ATR;1;59;001;59;102;;JO30DO;91;;N;N;',
-      '220703;1001;DL0VR;1;59;002;59;086;;JO31MH;30;;N;;',
-    ].join('\r\n');
-    const records = parseLog(new TextEncoder().encode(edi)).records;
-    expect(records).toHaveLength(2);
-    for (const record of records) {
-      expect(record).toMatchObject({
-        STATION_CALLSIGN: 'OK1KEO/P',
-        MY_GRIDSQUARE: 'JN79NU',
-        BAND: expectedBand,
-      });
-      expect(record).not.toHaveProperty('FREQ');
-    }
-    expect(selectFields(edi)).toEqual([
-      'BAND',
-      'CALL',
-      'GRIDSQUARE',
-      'MODE',
-      'MY_GRIDSQUARE',
-      'QSO_DATE',
-      'RST_RCVD',
-      'RST_SENT',
-      'SRX_STRING',
-      'STATION_CALLSIGN',
-      'STX_STRING',
-      'TIME_ON',
-    ]);
-  });
+    ['50 MHz', '6m', '50'],
+    ['144 MHz', '2m', '144'],
+    ['145 MHz', '2m', '145'],
+    ['435 MHz', '70cm', '435'],
+    ['1.3 GHz', '23cm', '1300'],
+    ['10 GHz', '3cm', '10000'],
+    ['144', '2m', '144'],
+    ['432', '70cm', '432'],
+    ['1,3 GHz', '23cm', '1300'],
+  ])(
+    'copies EDI station headers and %s band into every contact',
+    (band, expectedBand, expectedFrequency) => {
+      const edi = [
+        '[REG1TEST;1]',
+        'PCall=OK1KEO/P',
+        'PWWLo=JN79NU',
+        `PBand=${band}`,
+        '[QSORecords;2]',
+        '220703;0959;DL7ATR;1;59;001;59;102;;JO30DO;91;;N;N;',
+        '220703;1001;DL0VR;1;59;002;59;086;;JO31MH;30;;N;;',
+      ].join('\r\n');
+      const records = parseLog(new TextEncoder().encode(edi)).records;
+      expect(records).toHaveLength(2);
+      for (const record of records) {
+        expect(record).toMatchObject({
+          STATION_CALLSIGN: 'OK1KEO/P',
+          MY_GRIDSQUARE: 'JN79NU',
+          BAND: expectedBand,
+        });
+        expect(record.FREQ).toBe(expectedFrequency);
+      }
+      expect(selectFields(edi)).toEqual([
+        'BAND',
+        'CALL',
+        'FREQ',
+        'GRIDSQUARE',
+        'MODE',
+        'MY_GRIDSQUARE',
+        'QSO_DATE',
+        'RST_RCVD',
+        'RST_SENT',
+        'SRX_STRING',
+        'STATION_CALLSIGN',
+        'STX_STRING',
+        'TIME_ON',
+      ]);
+    },
+  );
 
   it('does not invent absent EDI station headers', () => {
     const edi =
@@ -173,8 +178,27 @@ describe('log parsing', () => {
 
   it('handles zero-length ADIF control tags and nonstandard numeric bands', () => {
     expect(parseLog('<PROGRAMID:4>Test<EOH:0><CALL:5>DL1AA<BAND:3>144<EOR:0>').records).toEqual([
-      { CALL: 'DL1AA', BAND: '2m' },
+      { CALL: 'DL1AA', BAND: '2m', FREQ: '144' },
     ]);
+  });
+
+  it.each([
+    ['40m', 'CW', '7'],
+    ['80m', 'SSB', '3.7'],
+    ['80m', 'LSB', '3.7'],
+    ['80m', 'CW', '3.5'],
+    ['80m', 'MFSK', '3.5'],
+    ['2m', 'CW', '144'],
+    ['2m', 'FM', '145'],
+  ])('fills missing frequency on %s in %s mode', (band, mode, frequency) => {
+    const record = parseLog(`<BAND:${band.length}>${band}<MODE:${mode.length}>${mode}<EOR>`, 'adif')
+      .records[0];
+    expect(record.FREQ).toBe(frequency);
+  });
+
+  it('preserves an explicitly supplied frequency', () => {
+    const record = parseLog('<BAND:3>80m<MODE:3>SSB<FREQ:3>3.8<EOR>', 'adif').records[0];
+    expect(record.FREQ).toBe('3.8');
   });
 
   it('does not interpret EOR text inside a length-delimited field', () => {
@@ -206,7 +230,7 @@ describe('log parsing', () => {
       RST_RCVD: '599',
       SRX_STRING: '192',
     });
-    expect(parsed.records[0]).not.toHaveProperty('FREQ');
+    expect(parsed.records[0].FREQ).toBe('144');
   });
 
   it('keeps received serial 1 when it is not a transmitter ID', () => {
@@ -239,6 +263,13 @@ describe('log parsing', () => {
       parseLog(`[REG1TEST;1]\n[QSORecords;1]\n261010;1234;DL1AA;${code};59;001;59;002;;JO70AA;;;;;`)
         .records[0].MODE,
     ).toBe(expected);
+  });
+
+  it('uses the EDI header frequency for 2 m QSOs, including FM', () => {
+    const record = parseLog(
+      '[REG1TEST;1]\nPBand=144 MHz\n[QSORecords;1]\n261010;1234;DL1AA;6;59;001;59;002;;JO70AA;;;;;',
+    ).records[0];
+    expect(record).toMatchObject({ BAND: '2m', MODE: 'FM', FREQ: '144' });
   });
 
   it('accepts the older EDI layout without a received-exchange column', () => {

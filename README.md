@@ -39,6 +39,9 @@ EDI code 7 is represented by generic `MFSK` (MGM); codes 3/4 retain the TX mode 
 Malformed tags, incomplete ADIF records, invalid dates/times/frequencies, unsupported EDI bands,
 and EDI record-count mismatches throw errors instead of returning a partially converted log.
 ADIF means the length-delimited ADI format, not XML ADX. Lengths are interpreted as UTF-8 bytes.
+When `FREQ` is absent but `BAND` is known, the parser fills in a nominal MHz frequency based on the
+band and mode (for example, 80 m SSB uses 3.7 MHz, 80 m CW/digital uses 3.5 MHz, and 2 m FM uses
+145 MHz). For EDI, a numeric `PBand` header value is retained as `FREQ`, normalized to MHz.
 
 ### Converting logs
 
