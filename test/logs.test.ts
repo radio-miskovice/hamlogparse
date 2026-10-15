@@ -48,6 +48,7 @@ describe('log parsing', () => {
 
     expect(selectFields(actualLog)).toEqual([
       'CALL',
+      'CONTEST_ID',
       'FREQ',
       'MODE',
       'QSO_DATE',
@@ -62,7 +63,8 @@ describe('log parsing', () => {
       CALL: 'DH1NBE',
       STX_STRING: 'JO31',
       RST_RCVD: '599',
-      SRX_STRING: 'JN59 0',
+      SRX_STRING: 'JN59',
+      CONTEST_ID: 'STEW-PERRY',
     });
   });
 
@@ -88,6 +90,7 @@ describe('log parsing', () => {
     expect(selectFields(edi)).toEqual([
       'BAND',
       'CALL',
+      'CONTEST_ID',
       'GRIDSQUARE',
       'MODE',
       'QSO_DATE',
@@ -106,6 +109,9 @@ describe('log parsing', () => {
     ['435 MHz', '70cm'],
     ['1.3 GHz', '23cm'],
     ['10 GHz', '3cm'],
+    ['144', '2m'],
+    ['432', '70cm'],
+    ['1,3 GHz', '23cm'],
   ])('copies EDI station headers and %s band into every contact', (band, expectedBand) => {
     const edi = [
       '[REG1TEST;1]',
@@ -163,6 +169,90 @@ describe('log parsing', () => {
   it('rejects invalid UTF-8 and undetectable formats', () => {
     expect(() => parseLog(new Uint8Array([0xff, 0xfe]))).toThrow('valid UTF-8');
     expect(() => parseLog('just text')).toThrow('Unable to detect');
+  });
+
+  it('handles zero-length ADIF control tags and nonstandard numeric bands', () => {
+    expect(parseLog('<PROGRAMID:4>Test<EOH:0><CALL:5>DL1AA<BAND:3>144<EOR:0>').records).toEqual([
+      { CALL: 'DL1AA', BAND: '2m' },
+    ]);
+  });
+
+  it('does not interpret EOR text inside a length-delimited field', () => {
+    expect(parseLog('<COMMENT:5><EOR><CALL:5>DL1AA<EOR>').records).toEqual([
+      { COMMENT: '<EOR>', CALL: 'DL1AA' },
+    ]);
+  });
+
+  it.each([
+    '<CALL:5>DL1AA',
+    '<CALL:x>DL1AA<EOR>',
+    '<CALL:999>DL1AA<EOR>',
+    '<CALL:5>DL1AA<QSO_DATE:8>20260230<EOR>',
+    '<CALL:5>DL1AA<TIME_ON:4>2460<EOR>',
+  ])('rejects malformed or incomplete ADIF instead of partially converting it', (text) => {
+    expect(() => parseLog(text, 'adif')).toThrow();
+  });
+
+  it('handles a blank own callsign in Cabrillo without shifting reports', () => {
+    const parsed = parseLog(
+      'START-OF-LOG: 3.0\nQSO:   144 CW 2021-11-06 1718               599 001    OL3Z          599 192    0',
+    );
+    expect(parsed.records[0]).toMatchObject({
+      BAND: '2m',
+      STATION_CALLSIGN: '',
+      RST_SENT: '599',
+      STX_STRING: '001',
+      CALL: 'OL3Z',
+      RST_RCVD: '599',
+      SRX_STRING: '192',
+    });
+    expect(parsed.records[0]).not.toHaveProperty('FREQ');
+  });
+
+  it('keeps received serial 1 when it is not a transmitter ID', () => {
+    expect(
+      parseLog('QSO: 7000 CW 2026-10-10 1234 DL0ME 599 1 DL1AA 599 1').records[0].SRX_STRING,
+    ).toBe('1');
+  });
+
+  it.each(['EO60MF', 'OL50DJ', 'OM77PA', 'AN43HU', 'AO25AH', 'OL44DJ', 'OL80TN'])(
+    'does not mistake special-event callsign %s for a locator',
+    (call) => {
+      expect(
+        parseLog(`QSO: 7000 CW 2026-10-10 1234 DL0ME 599 001 ${call} 599 002`).records[0].CALL,
+      ).toBe(call);
+    },
+  );
+
+  it.each([
+    ['1', 'SSB'],
+    ['2', 'CW'],
+    ['3', 'SSB'],
+    ['4', 'CW'],
+    ['5', 'AM'],
+    ['6', 'FM'],
+    ['7', 'MFSK'],
+    ['8', 'SSTV'],
+    ['9', 'ATV'],
+  ])('maps EDI mode %s according to IARU R1', (code, expected) => {
+    expect(
+      parseLog(`[REG1TEST;1]\n[QSORecords;1]\n261010;1234;DL1AA;${code};59;001;59;002;;JO70AA;;;;;`)
+        .records[0].MODE,
+    ).toBe(expected);
+  });
+
+  it('accepts the older EDI layout without a received-exchange column', () => {
+    expect(
+      parseLog(
+        '[REG1TEST;1]\nPBand=144\n[QSORecords;1]\n261010;1234;DL1AA;1;59;001;59;002;JO70AA;2;;N;;',
+      ).records[0].GRIDSQUARE,
+    ).toBe('JO70AA');
+  });
+
+  it('rejects an EDI record count mismatch', () => {
+    expect(() =>
+      parseLog('[REG1TEST;1]\n[QSORecords;2]\n261010;1234;DL1AA;1;59;001;59;002;;JO70AA;;;;;'),
+    ).toThrow('declares 2 QSOs but contains 1');
   });
 });
 

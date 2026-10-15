@@ -1,4 +1,4 @@
-# hamlogparse
+# hamlogparse4print
 
 Parser for amateur radio (ham) log files and QSL label layout templates, written in TypeScript.
 
@@ -8,7 +8,7 @@ returned as a record of ADIF-style field names (`CALL`, `QSO_DATE`, `TIME_ON`, `
 ## Install
 
 ```sh
-npm install hamlogparse
+npm install hamlogparse4print
 ```
 
 ## Usage
@@ -16,7 +16,7 @@ npm install hamlogparse
 ### Logs
 
 ```ts
-import { parseLog, selectFields } from 'hamlogparse';
+import { parseLog, selectFields } from 'hamlogparse4print';
 
 // input is a string or UTF-8 bytes (Uint8Array); the format is auto-detected
 const { format, records } = parseLog(text);
@@ -28,13 +28,58 @@ parseLog(text, 'adif');
 selectFields(text); // ['CALL', 'MODE', 'QSO_DATE', ...]
 ```
 
+`parseLog` also exposes optional `metadata` with station callsign, station locator, and contest
+name from Cabrillo/EDI headers. Available metadata is copied into QSO records. Absent values
+are not invented. EDI numeric MHz bands and decimal-comma GHz values are accepted, as are
+older EDI rows omitting the received-exchange column. Cabrillo supports generic RST/exchange
+and locator layouts, including a blank own callsign; a trailing transmitter ID is not an exchange.
+EDI code 7 is represented by generic `MFSK` (MGM); codes 3/4 retain the TX mode and an
+`APP_HAMLOGPARSE_EDI_MODE` field for cross-mode round trips.
+
+Malformed tags, incomplete ADIF records, invalid dates/times/frequencies, unsupported EDI bands,
+and EDI record-count mismatches throw errors instead of returning a partially converted log.
+ADIF means the length-delimited ADI format, not XML ADX. Lengths are interpreted as UTF-8 bytes.
+
+### Converting logs
+
+```ts
+import { parseLog, serializeLog } from 'hamlogparse4print';
+
+const log = parseLog(text);
+const { files, warnings } = serializeLog(log, 'edi');
+// files: { content, extension, band?, qsoCount }[]
+// Multi-band EDI output is split into one file per band.
+```
+
+Serialization is synchronous and entirely in memory, with no filesystem or network access.
+Application-specific limits (such as maximum QSO count) belong in the consuming app.
+ADIF output preserves record fields. Cabrillo/EDI output uses common QSO data, not contest-specific
+scoring, categories, or equipment details. Missing values stay blank, including EDI `SAntH=`.
+Unknown bands are grouped in a separate EDI file with an empty band header. EDI includes all
+header keys but leaves unknown values and uncomputed scores blank; supplied ADIF serials
+are zero-padded, never generated. EDI two-digit years use the full dates in `TDate` to resolve
+the century (including historical logs and contests spanning a century boundary); without
+`TDate`, they default to 2000-2099. An ambiguous date across multiple centuries is rejected.
+
+`warnings` reports dropped fields, unsupported modes, character replacement, oversized fields
+left blank, and other format limitations. Cabrillo uses the generic fixed-width RST/exchange
+layout (six characters per exchange); EDI uses the standard 15-column QSO layout. EDI cannot
+retain exact frequencies; Cabrillo VHF+ frequencies become band designators. Times in these
+formats have minute precision and digital modes are generic. Converted logs with missing
+required information are not necessarily valid contest submissions.
+
 ### Templates
 
 Label templates (YAML string or object) describe the paper, the label grid and the fields
 placed on each label. All dimensions are in millimetres.
 
 ```ts
-import { createTemplateLayout, normalizeTemplate, parseTemplate, TemplateError } from 'hamlogparse';
+import {
+  createTemplateLayout,
+  normalizeTemplate,
+  parseTemplate,
+  TemplateError,
+} from 'hamlogparse4print';
 
 const template = parseTemplate(yaml); // validates, throws TemplateError on problems
 const normalized = normalizeTemplate(template); // resolved paper size, margins, gaps, safety

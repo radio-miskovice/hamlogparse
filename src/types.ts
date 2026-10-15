@@ -7,6 +7,19 @@ export type LogRecord = Record<string, string>;
 export interface ParsedLog {
   format: SupportedLogFormat;
   records: LogRecord[];
+  metadata?: LogRecord;
+}
+
+export interface SerializedLogFile {
+  content: string;
+  extension: 'adi' | 'cbr' | 'edi';
+  band?: string;
+  qsoCount: number;
+}
+
+export interface SerializedLog {
+  files: SerializedLogFile[];
+  warnings: string[];
 }
 
 export type TemplateInput = string | LabelTemplate;

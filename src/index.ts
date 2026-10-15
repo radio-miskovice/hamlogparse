@@ -1,4 +1,5 @@
 export { parseLog, selectFields } from './logs';
+export { serializeLog } from './serialize';
 export {
   createTemplateLayout,
   normalizeTemplate,
@@ -16,6 +17,8 @@ export type {
   LogInput,
   LogRecord,
   ParsedLog,
+  SerializedLog,
+  SerializedLogFile,
   PaperTemplate,
   PaperSettings,
   SupportedLogFormat,
