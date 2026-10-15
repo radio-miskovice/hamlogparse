@@ -1,6 +1,6 @@
 {
   "name": "hamlogparse4print",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "Parser for amateur radio log files (ADIF, Cabrillo, EDI) and QSL label templates",
   "keywords": [
     "ham",
