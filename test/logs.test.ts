@@ -164,7 +164,9 @@ describe('log parsing', () => {
   });
 
   it.each(['unknown', '999 MHz'])('reports an unsupported EDI band %s', (band) => {
-    expect(() => parseLog(`[REG1TEST;1]\nPBand=${band}\n[QSORecords;0]`)).toThrow(/EDI PBand/);
+    expect(() => parseLog(`[REG1TEST;1]\nPBand=${band}\n[QSORecords;0]`)).toThrow(
+      /EDI PBand.*\(line 2\)$/,
+    );
   });
 
   it('allows callers to supply a format when detection is ambiguous', () => {
@@ -173,7 +175,22 @@ describe('log parsing', () => {
 
   it('rejects invalid UTF-8 and undetectable formats', () => {
     expect(() => parseLog(new Uint8Array([0xff, 0xfe]))).toThrow('valid UTF-8');
+    expect(() => parseLog(new Uint8Array([0x61, 0x0a, 0xff]))).toThrow(/\(line 2\)$/);
     expect(() => parseLog('just text')).toThrow('Unable to detect');
+  });
+
+  it('includes the source line in parsing and validation errors', () => {
+    expect(() => parseLog('header\n<CALL:x>DL1AA<EOR>', 'adif')).toThrow(/\(line 2\)$/);
+    expect(() => parseLog('START-OF-LOG: 3.0\nQSO: malformed', 'cabrillo')).toThrow(/\(line 2\)$/);
+    expect(() =>
+      parseLog(
+        '[REG1TEST;1]\n[QSORecords;1]\n261010;1234;DL1AA;99;59;001;59;002;;JO70AA;;;;;',
+        'edi',
+      ),
+    ).toThrow(/\(line 3\)$/);
+    expect(() => parseLog('<CALL:5>DL1AA<EOR>\n<QSO_DATE:8>20260230<EOR>', 'adif')).toThrow(
+      /\(line 2\)$/,
+    );
   });
 
   it('handles zero-length ADIF control tags and nonstandard numeric bands', () => {
@@ -283,7 +300,7 @@ describe('log parsing', () => {
   it('rejects an EDI record count mismatch', () => {
     expect(() =>
       parseLog('[REG1TEST;1]\n[QSORecords;2]\n261010;1234;DL1AA;1;59;001;59;002;;JO70AA;;;;;'),
-    ).toThrow('declares 2 QSOs but contains 1');
+    ).toThrow(/declares 2 QSOs but contains 1.*\(line 2\)$/);
   });
 });
 

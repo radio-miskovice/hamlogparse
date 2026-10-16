@@ -21,11 +21,62 @@ const ediModes: Record<string, string> = {
   '9': 'ATV',
 };
 
+interface SourcePosition {
+  line: number;
+}
+
+interface ParsedRecords {
+  records: LogRecord[];
+  fieldPositions: Record<string, SourcePosition>[];
+}
+
+function sourcePosition(text: string, offset: number): SourcePosition {
+  const end = Math.max(0, Math.min(offset, text.length));
+  let line = 1;
+  for (let index = 0; index < end; index++) {
+    if (text[index] === '\r') {
+      if (text[index + 1] === '\n' && index + 1 < end) index++;
+      line++;
+    } else if (text[index] === '\n') {
+      line++;
+    }
+  }
+  return { line };
+}
+
+function atPosition(message: string, position: SourcePosition): Error {
+  return new Error(`${message} (line ${position.line})`);
+}
+
+function bytePosition(text: string, bytes: Uint8Array, offset: number): SourcePosition {
+  return sourcePosition(text, decoder.decode(bytes.subarray(0, offset)).length);
+}
+
+function invalidUtf8Line(input: Uint8Array): number {
+  const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
+  let line = 1;
+  const countLines = (text: string) => (line += text.split('\n').length - 1);
+  for (let index = 0; index < input.length; index++) {
+    try {
+      countLines(utf8Decoder.decode(input.subarray(index, index + 1), { stream: true }));
+    } catch {
+      return line;
+    }
+  }
+  try {
+    countLines(utf8Decoder.decode());
+  } catch {
+    return line;
+  }
+  return line;
+}
+
 function asText(input: LogInput): string {
   try {
     return typeof input === 'string' ? input : decoder.decode(input);
   } catch (error) {
-    throw new Error('Log data must be valid UTF-8.', { cause: error });
+    const line = typeof input === 'string' ? 1 : invalidUtf8Line(input);
+    throw new Error(`Log data must be valid UTF-8. (line ${line})`, { cause: error });
   }
 }
 
@@ -33,19 +84,25 @@ function detectFormat(text: string): SupportedLogFormat {
   if (/^\s*\[REG1TEST\s*;/im.test(text)) return 'edi';
   if (/^\s*(?:START-OF-LOG:|QSO:)/im.test(text)) return 'cabrillo';
   if (/<\s*(?:EOH|EOR)(?::0)?\s*>/i.test(text)) return 'adif';
-  throw new Error('Unable to detect log format; specify format explicitly.');
+  throw atPosition(
+    'Unable to detect log format; specify format explicitly.',
+    sourcePosition(text, 0),
+  );
 }
 
-function parseAdif(text: string): LogRecord[] {
+function parseAdif(text: string): ParsedRecords {
   const bytes = new TextEncoder().encode(text);
   const records: LogRecord[] = [];
+  const fieldPositions: Record<string, SourcePosition>[] = [];
   let record: LogRecord = {};
+  let recordFieldPositions: Record<string, SourcePosition> = {};
   let position = 0;
   while (position < bytes.length) {
     const open = bytes.indexOf(60, position);
     if (open < 0) break;
     const close = bytes.indexOf(62, open + 1);
-    if (close < 0) throw new Error("Malformed ADIF tag: missing closing '>'.");
+    if (close < 0)
+      throw atPosition("Malformed ADIF tag: missing closing '>'.", bytePosition(text, bytes, open));
     const tag = decoder.decode(bytes.subarray(open + 1, close)).trim();
     position = close + 1;
     if (/^EOH(?::0)?$/i.test(tag)) {
@@ -53,21 +110,41 @@ function parseAdif(text: string): LogRecord[] {
       continue;
     }
     if (/^EOR(?::0)?$/i.test(tag)) {
-      if (Object.keys(record).length > 0) records.push(record);
+      if (Object.keys(record).length > 0) {
+        records.push(record);
+        fieldPositions.push(recordFieldPositions);
+      }
       record = {};
+      recordFieldPositions = {};
       continue;
     }
     const match = /^([A-Z0-9_]+):(\d+)(?::[^>]*)?$/i.exec(tag);
-    if (!match) throw new Error(`Malformed ADIF tag: <${tag}>.`);
+    if (!match) throw atPosition(`Malformed ADIF tag: <${tag}>.`, bytePosition(text, bytes, open));
     const length = Number(match[2]);
     if (!Number.isSafeInteger(length) || position + length > bytes.length) {
-      throw new Error(`Invalid byte length for ADIF field ${match[1]}.`);
+      throw atPosition(
+        `Invalid byte length for ADIF field ${match[1]}.`,
+        bytePosition(text, bytes, open),
+      );
     }
-    record[match[1].toUpperCase()] = decoder.decode(bytes.subarray(position, position + length));
+    const field = match[1].toUpperCase();
+    try {
+      record[field] = decoder.decode(bytes.subarray(position, position + length));
+    } catch (error) {
+      const location = bytePosition(text, bytes, open);
+      throw new Error(`ADIF field ${field} must contain valid UTF-8 (line ${location.line}).`, {
+        cause: error,
+      });
+    }
+    recordFieldPositions[field] = bytePosition(text, bytes, open);
     position += length;
   }
-  if (Object.keys(record).length) throw new Error('Incomplete ADIF record: missing <EOR>.');
-  return records;
+  if (Object.keys(record).length)
+    throw atPosition(
+      'Incomplete ADIF record: missing <EOR>.',
+      bytePosition(text, bytes, bytes.length),
+    );
+  return { records, fieldPositions };
 }
 
 function headers(text: string, separator: ':' | '='): LogRecord {
@@ -110,7 +187,7 @@ function exchange(record: LogRecord, side: 'STX' | 'SRX', tokens: string[]): voi
   if (tokens.length) record[`${side}_STRING`] = tokens.join(' ');
 }
 
-function parseCabrillo(text: string): ParsedLog {
+function parseCabrillo(text: string): ParsedLog & ParsedRecords {
   const h = headers(text, ':');
   const metadata: LogRecord = {
     STATION_CALLSIGN: h.CALLSIGN ?? '',
@@ -118,9 +195,11 @@ function parseCabrillo(text: string): ParsedLog {
     CONTEST_ID: h.CONTEST ?? '',
   };
   const records: LogRecord[] = [];
+  const fieldPositions: Record<string, SourcePosition>[] = [];
   for (const [lineIndex, rawLine] of text.split(/\r?\n/).entries()) {
     const match = /^\s*QSO\s*: ?(.*)$/i.exec(rawLine);
     if (!match) continue;
+    const dataPosition = { line: lineIndex + 1 };
     const fixed = fixedCabrillo(match[1]);
     let record: LogRecord;
     let frequency: string;
@@ -144,16 +223,14 @@ function parseCabrillo(text: string): ParsedLog {
         !/^\d{4}-\d{2}-\d{2}$/.test(tokens[2]) ||
         !/^\d{4}$/.test(tokens[3])
       ) {
-        throw new Error(`Malformed Cabrillo QSO record on line ${lineIndex + 1}.`);
+        throw atPosition('Malformed Cabrillo QSO record.', dataPosition);
       }
       const ownCall = isCallsign(tokens[4]);
       const workedIndex = tokens.findIndex(
         (token, index) => index >= (ownCall ? 5 : 4) && isCallsign(token),
       );
       if (workedIndex < 0)
-        throw new Error(
-          `Unable to locate contacted station in Cabrillo QSO on line ${lineIndex + 1}.`,
-        );
+        throw atPosition('Unable to locate contacted station in Cabrillo QSO.', dataPosition);
       frequency = tokens[0];
       record = {
         MODE: cabrilloMode(tokens[1]),
@@ -175,18 +252,21 @@ function parseCabrillo(text: string): ParsedLog {
     if (band && band.min >= 50) record.BAND = band.name;
     else if (frequency) {
       if (!/^\d+(?:\.\d+)?$/.test(frequency) || Number(frequency) <= 0) {
-        throw new Error(`Unsupported Cabrillo frequency "${frequency}" on line ${lineIndex + 1}.`);
+        throw atPosition(`Unsupported Cabrillo frequency "${frequency}".`, dataPosition);
       }
       record.FREQ = String(Number(frequency) / 1000);
     }
+    fieldPositions.push(
+      Object.fromEntries(Object.keys(record).map((field) => [field, dataPosition])),
+    );
     for (const [key, value] of Object.entries(metadata))
       if (value && !record[key]) record[key] = value;
     records.push(record);
   }
-  return { format: 'cabrillo', records, metadata };
+  return { format: 'cabrillo', records, metadata, fieldPositions };
 }
 
-function parseEdi(text: string): ParsedLog {
+function parseEdi(text: string): ParsedLog & ParsedRecords {
   const h = headers(text, '=');
   const metadata: LogRecord = {
     STATION_CALLSIGN: h.PCALL ?? '',
@@ -197,20 +277,26 @@ function parseEdi(text: string): ParsedLog {
   for (const [key, value] of Object.entries(metadata)) if (value) common[key] = value;
   if (h.PBAND) {
     const band = ediBand(h.PBAND);
-    if (!band) throw new Error(`Unsupported EDI PBand value: "${h.PBAND}".`);
+    if (!band)
+      throw atPosition(
+        `Unsupported EDI PBand value: "${h.PBAND}".`,
+        findHeaderPosition(text, 'PBAND', '='),
+      );
     common.BAND = band.name;
     const frequency = ediFrequencyMhz(h.PBAND);
     if (frequency) common.FREQ = frequency;
   }
   const records: LogRecord[] = [];
+  const fieldPositions: Record<string, SourcePosition>[] = [];
   let reading = false;
   let expected: number | undefined;
   for (const [lineIndex, rawLine] of text.split(/\r?\n/).entries()) {
     const line = rawLine.trim();
+    const linePosition = { line: lineIndex + 1 };
     const section = /^\[QSORecords;(\d+)\]$/i.exec(line);
     if (section) {
       if (expected !== undefined)
-        throw new Error('Multiple EDI QSORecords sections are not supported.');
+        throw atPosition('Multiple EDI QSORecords sections are not supported.', linePosition);
       expected = Number(section[1]);
       reading = true;
       continue;
@@ -218,14 +304,14 @@ function parseEdi(text: string): ParsedLog {
     if (line.startsWith('[')) reading = false;
     if (!reading || !line || line.startsWith('#')) continue;
     const c = line.split(';').map((value) => value.trim());
-    if (c.length < 10) throw new Error(`Malformed EDI QSO record on line ${lineIndex + 1}.`);
+    if (c.length < 10) throw atPosition('Malformed EDI QSO record.', linePosition);
     // Older exporters omit the empty received-exchange column before the locator.
     if (/^[A-R]{2}\d{2}(?:[A-X]{2})?$/i.test(c[8]) && !/^[A-R]{2}\d{2}/i.test(c[9])) {
       c.splice(8, 0, '');
     }
     const record: LogRecord = {
       ...common,
-      QSO_DATE: ediDate(c[0], h.TDATE),
+      QSO_DATE: ediDate(c[0], h.TDATE, linePosition),
       TIME_ON: c[1],
       CALL: c[2],
       RST_SENT: c[4],
@@ -236,19 +322,31 @@ function parseEdi(text: string): ParsedLog {
     };
     if (c[8]) record.SRX_STRING = [c[7], c[8]].filter(Boolean).join(' ');
     if (c[3] && c[3] !== '0') {
-      if (!ediModes[c[3]]) throw new Error(`Unknown EDI mode "${c[3]}" on line ${lineIndex + 1}.`);
+      if (!ediModes[c[3]]) throw atPosition(`Unknown EDI mode "${c[3]}".`, linePosition);
       record.MODE = ediModes[c[3]];
       if (c[3] === '3' || c[3] === '4') record.APP_HAMLOGPARSE_EDI_MODE = c[3];
     }
     records.push(record);
+    fieldPositions.push(
+      Object.fromEntries(Object.keys(record).map((field) => [field, linePosition])),
+    );
   }
-  if (expected === undefined) throw new Error('Missing EDI QSORecords section.');
+  if (expected === undefined)
+    throw atPosition('Missing EDI QSORecords section.', sourcePosition(text, text.length));
   if (records.length !== expected)
-    throw new Error(`EDI declares ${expected} QSOs but contains ${records.length}.`);
-  return { format: 'edi', records, metadata };
+    throw atPosition(
+      `EDI declares ${expected} QSOs but contains ${records.length}.`,
+      findHeaderPosition(text, 'QSORecords', '['),
+    );
+  return { format: 'edi', records, metadata, fieldPositions };
 }
 
-function ediDate(value: string, contestDates = ''): string {
+function findHeaderPosition(text: string, name: string, separator: string): SourcePosition {
+  const match = new RegExp(`^[ \\t]*${separator === '[' ? '\\[' : ''}${name}`, 'im').exec(text);
+  return sourcePosition(text, match?.index ?? 0);
+}
+
+function ediDate(value: string, contestDates = '', position: SourcePosition): string {
   if (!value) return '';
   const dates = contestDates
     .split(';')
@@ -263,7 +361,7 @@ function ediDate(value: string, contestDates = ''): string {
       if (candidate >= start && candidate <= end) candidates.push(candidate);
     }
     if (candidates.length > 1)
-      throw new Error(`Ambiguous EDI QSO date "${value}" for TDate=${contestDates}.`);
+      throw atPosition(`Ambiguous EDI QSO date "${value}" for TDate=${contestDates}.`, position);
     return candidates[0] ?? `${start.slice(0, 2)}${value}`;
   }
   return `20${value}`;
@@ -278,8 +376,12 @@ function isCallsign(value: string): boolean {
   return /^(?:[A-Z0-9]+\/)?[A-Z0-9]*\d[A-Z]+[A-Z0-9]*(?:\/[A-Z0-9]+)*$/i.test(value);
 }
 
-function validateRecords(records: LogRecord[]): void {
+function validateRecords(
+  records: LogRecord[],
+  fieldPositions: Record<string, SourcePosition>[],
+): void {
   for (const [index, record] of records.entries()) {
+    const position = (field: string) => fieldPositions[index]?.[field] ?? { line: 1 };
     const date = record.QSO_DATE?.trim();
     if (date) {
       const iso = /^\d{8}$/.test(date)
@@ -287,21 +389,28 @@ function validateRecords(records: LogRecord[]): void {
         : '';
       const parsed = new Date(`${iso}T00:00:00Z`);
       if (!iso || !Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== iso) {
-        throw new Error(`Invalid QSO date "${date}" in record ${index + 1}.`);
+        throw atPosition(
+          `Invalid QSO date "${date}" in record ${index + 1}.`,
+          position('QSO_DATE'),
+        );
       }
     }
     const time = record.TIME_ON?.trim();
     if (time && !/^(?:[01]\d|2[0-3])[0-5]\d(?:[0-5]\d)?$/.test(time)) {
-      throw new Error(`Invalid QSO time "${time}" in record ${index + 1}.`);
+      throw atPosition(`Invalid QSO time "${time}" in record ${index + 1}.`, position('TIME_ON'));
     }
     if (record.FREQ && (!/^\d+(?:\.\d+)?$/.test(record.FREQ.trim()) || Number(record.FREQ) <= 0)) {
-      throw new Error(`Invalid frequency in record ${index + 1}.`);
+      throw atPosition(`Invalid frequency in record ${index + 1}.`, position('FREQ'));
     }
     // Some exporters put a frequency in MHz in ADIF BAND instead of an ADIF band name.
     let band = bandNamed(record.BAND?.trim() ?? '');
     if (record.BAND && !/[a-z]/i.test(record.BAND)) {
       band = bandAt(Number(record.BAND));
-      if (!band) throw new Error(`Unsupported ADIF band "${record.BAND}" in record ${index + 1}.`);
+      if (!band)
+        throw atPosition(
+          `Unsupported ADIF band "${record.BAND}" in record ${index + 1}.`,
+          position('BAND'),
+        );
       record.BAND = band.name;
     }
     if (!record.FREQ?.trim() && band) record.FREQ = bandFrequencyMhz(band, record.MODE);
@@ -315,12 +424,16 @@ export function parseLog(input: LogInput, format?: SupportedLogFormat): ParsedLo
     throw new Error(`Unsupported log format: ${String(selectedFormat)}.`);
   const parsed =
     selectedFormat === 'adif'
-      ? { format: selectedFormat, records: parseAdif(text) }
+      ? { format: selectedFormat, ...parseAdif(text) }
       : selectedFormat === 'cabrillo'
         ? parseCabrillo(text)
         : parseEdi(text);
-  validateRecords(parsed.records);
-  return parsed;
+  validateRecords(parsed.records, parsed.fieldPositions);
+  return {
+    format: parsed.format,
+    records: parsed.records,
+    ...(parsed.metadata !== undefined ? { metadata: parsed.metadata } : {}),
+  };
 }
 
 export function selectFields(input: LogInput, format?: SupportedLogFormat): string[] {
