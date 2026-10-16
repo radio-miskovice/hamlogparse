@@ -11,6 +11,8 @@ returned as a record of ADIF-style field names (`CALL`, `QSO_DATE`, `TIME_ON`, `
 npm install hamlogparse4print
 ```
 
+See [API.md](./API.md) for the complete public API reference.
+
 ## Usage
 
 ### Logs
