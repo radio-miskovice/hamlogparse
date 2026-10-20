@@ -48,7 +48,8 @@ and EDI record-count mismatches throw errors instead of returning a partially co
 ADIF means the length-delimited ADI format, not XML ADX. Lengths are interpreted as UTF-8 bytes.
 When `FREQ` is absent but `BAND` is known, the parser fills in a nominal MHz frequency based on the
 band and mode (for example, 80 m SSB uses 3.7 MHz, 80 m CW/digital uses 3.5 MHz, and 2 m FM uses
-145 MHz). For EDI, a numeric `PBand` header value is retained as `FREQ`, normalized to MHz.
+145 MHz). For EDI, a numeric `PBand` header value is retained as `FREQ`, normalized to MHz, except
+that the standard 70cm `PBand=435 MHz` is represented as `432`.
 
 Every parsed QSO also has a printing-only `FREQ_BAND` label, such as `136 kHz`,
 `14 MHz`, `432 MHz`, or `1.3 GHz`. `FREQ_BAND_RX` is generated only when

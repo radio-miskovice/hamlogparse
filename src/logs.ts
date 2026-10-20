@@ -292,7 +292,8 @@ function parseEdi(text: string): ParsedLog & ParsedRecords {
       );
     common.BAND = band.name;
     const frequency = ediFrequencyMhz(h.PBAND);
-    if (frequency) common.FREQ = frequency;
+    if (frequency)
+      common.FREQ = band.name === '70cm' ? bandFrequencyMhz(band) : frequency;
   }
   const records: LogRecord[] = [];
   const fieldPositions: Record<string, SourcePosition>[] = [];

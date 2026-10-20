@@ -91,13 +91,13 @@ describe('printing band fields', () => {
     expect(edi.records[0].FREQ_BAND).toBe('1.3 GHz');
   });
 
-  it('uses the 70cm printing label while preserving the EDI standard frequency', () => {
+  it('normalizes the EDI 70cm frequency while preserving the standard PBand on export', () => {
     const log = parseLog(
       '[REG1TEST;1]\nPBand=435 MHz\n[QSORecords;1]\n261010;1234;DL1AA;1;59;001;59;002;;JO70AA;',
     );
     expect(log.records[0]).toMatchObject({
       BAND: '70cm',
-      FREQ: '435',
+      FREQ: '432',
       FREQ_BAND: '432 MHz',
     });
     expect(serializeLog(log, 'edi').files[0].content).toContain('PBand=435 MHz\r\n');
