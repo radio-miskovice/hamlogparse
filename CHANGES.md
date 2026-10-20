@@ -1,6 +1,6 @@
 # Changes
 
-## 1.1.3 - 2026-10-20
+## 1.1.4 - 2026-10-20
 
 - Use 432 MHz for 70cm printing labels and derived frequencies, while retaining
   the EDI-standard 435 MHz band value.
