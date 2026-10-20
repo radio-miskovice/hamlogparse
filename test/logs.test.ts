@@ -10,7 +10,7 @@ const adif = [
 
 describe('log parsing', () => {
   it('lists ADIF fields and respects UTF-8 byte lengths', () => {
-    expect(selectFields(adif)).toEqual(['CALL', 'QSO_DATE', 'TIME_ON']);
+    expect(selectFields(adif)).toEqual(['CALL', 'FREQ_BAND', 'QSO_DATE', 'TIME_ON']);
     expect(parseLog(adif).records[1]!.CALL).toBe('F1BÁR');
   });
 
@@ -24,6 +24,7 @@ describe('log parsing', () => {
     expect(parsed.records).toEqual([
       {
         FREQ: '14',
+        FREQ_BAND: '14 MHz',
         MODE: 'CW',
         QSO_DATE: '20261010',
         TIME_ON: '1234',
@@ -50,6 +51,7 @@ describe('log parsing', () => {
       'CALL',
       'CONTEST_ID',
       'FREQ',
+      'FREQ_BAND',
       'MODE',
       'QSO_DATE',
       'RST_RCVD',
@@ -92,6 +94,7 @@ describe('log parsing', () => {
       'CALL',
       'CONTEST_ID',
       'FREQ',
+      'FREQ_BAND',
       'GRIDSQUARE',
       'MODE',
       'QSO_DATE',
@@ -139,6 +142,7 @@ describe('log parsing', () => {
         'BAND',
         'CALL',
         'FREQ',
+        'FREQ_BAND',
         'GRIDSQUARE',
         'MODE',
         'MY_GRIDSQUARE',
@@ -195,7 +199,7 @@ describe('log parsing', () => {
 
   it('handles zero-length ADIF control tags and nonstandard numeric bands', () => {
     expect(parseLog('<PROGRAMID:4>Test<EOH:0><CALL:5>DL1AA<BAND:3>144<EOR:0>').records).toEqual([
-      { CALL: 'DL1AA', BAND: '2m', FREQ: '144' },
+      { CALL: 'DL1AA', BAND: '2m', FREQ: '144', FREQ_BAND: '144 MHz' },
     ]);
   });
 
@@ -207,6 +211,7 @@ describe('log parsing', () => {
     ['80m', 'MFSK', '3.5'],
     ['2m', 'CW', '144'],
     ['2m', 'FM', '145'],
+    ['70cm', 'CW', '432'],
   ])('fills missing frequency on %s in %s mode', (band, mode, frequency) => {
     const record = parseLog(`<BAND:${band.length}>${band}<MODE:${mode.length}>${mode}<EOR>`, 'adif')
       .records[0];
@@ -220,7 +225,7 @@ describe('log parsing', () => {
 
   it('does not interpret EOR text inside a length-delimited field', () => {
     expect(parseLog('<COMMENT:5><EOR><CALL:5>DL1AA<EOR>').records).toEqual([
-      { COMMENT: '<EOR>', CALL: 'DL1AA' },
+      { COMMENT: '<EOR>', CALL: 'DL1AA', FREQ_BAND: '' },
     ]);
   });
 

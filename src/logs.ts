@@ -1,4 +1,12 @@
-import { bandAt, bandFrequencyMhz, bandNamed, bands, ediBand, ediFrequencyMhz } from './bands';
+import {
+  bandAt,
+  bandFrequencyMhz,
+  bandNamed,
+  bands,
+  ediBand,
+  ediFrequencyMhz,
+  printingBand,
+} from './bands';
 import {
   supportedLogFormats,
   type LogInput,
@@ -429,6 +437,12 @@ export function parseLog(input: LogInput, format?: SupportedLogFormat): ParsedLo
         ? parseCabrillo(text)
         : parseEdi(text);
   validateRecords(parsed.records, parsed.fieldPositions);
+  for (const record of parsed.records) {
+    record.FREQ_BAND = printingBand(record.BAND, record.FREQ);
+    if ('BAND_RX' in record || 'FREQ_RX' in record)
+      record.FREQ_BAND_RX = printingBand(record.BAND_RX, record.FREQ_RX);
+    else delete record.FREQ_BAND_RX;
+  }
   return {
     format: parsed.format,
     records: parsed.records,

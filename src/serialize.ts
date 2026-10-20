@@ -64,6 +64,8 @@ const commonFields = new Set([
   'GRIDSQUARE',
   'CONTEST_ID',
   'APP_HAMLOGPARSE_EDI_MODE',
+  'FREQ_BAND',
+  'FREQ_BAND_RX',
 ]);
 
 function bandFor(record: LogRecord): Band | undefined {
@@ -85,6 +87,7 @@ function adif(log: Pick<ParsedLog, 'records' | 'metadata'>): SerializedLogFile {
     if (!merged.BAND && bandFor(record)) merged.BAND = bandFor(record)!.name;
     return (
       Object.entries(merged)
+        .filter(([key]) => key !== 'FREQ_BAND' && key !== 'FREQ_BAND_RX')
         .map(([key, value]) => tag(key, value))
         .join('') + '<EOR>'
     );

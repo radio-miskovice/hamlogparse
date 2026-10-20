@@ -18,7 +18,7 @@ See [API.md](./API.md) for the complete public API reference.
 ### Logs
 
 ```ts
-import { parseLog, selectFields } from 'hamlogparse4print';
+import { parseLog, selectFields, sortLog } from 'hamlogparse4print';
 
 // input is a string or UTF-8 bytes (Uint8Array); the format is auto-detected
 const { format, records } = parseLog(text);
@@ -28,6 +28,11 @@ parseLog(text, 'adif');
 
 // sorted list of all field names used in the log
 selectFields(text); // ['CALL', 'MODE', 'QSO_DATE', ...]
+
+// sorted copies; the original log is unchanged
+const byCall = sortLog(parseLog(text), 'CALL');
+const byBand = sortLog(byCall, 'BAND'); // increasing radio frequency
+const descending = sortLog(byBand, 'QSO_DATE', 'desc');
 ```
 
 `parseLog` also exposes optional `metadata` with station callsign, station locator, and contest
@@ -45,6 +50,14 @@ When `FREQ` is absent but `BAND` is known, the parser fills in a nominal MHz fre
 band and mode (for example, 80 m SSB uses 3.7 MHz, 80 m CW/digital uses 3.5 MHz, and 2 m FM uses
 145 MHz). For EDI, a numeric `PBand` header value is retained as `FREQ`, normalized to MHz.
 
+Every parsed QSO also has a printing-only `FREQ_BAND` label, such as `136 kHz`,
+`14 MHz`, `432 MHz`, or `1.3 GHz`. `FREQ_BAND_RX` is generated only when
+`BAND_RX` or `FREQ_RX` is present. Labels describe the nominal band, not the
+precise operating frequency; unresolved bands produce empty labels. These fields
+are available to label templates and the host application but are omitted from
+all serialized log files. For 70cm, the printing label and derived `FREQ` use
+432 MHz; EDI files retain the standard `PBand=435 MHz` value.
+
 ### Converting logs
 
 ```ts
@@ -58,7 +71,7 @@ const { files, warnings } = serializeLog(log, 'edi');
 
 Serialization is synchronous and entirely in memory, with no filesystem or network access.
 Application-specific limits (such as maximum QSO count) belong in the consuming app.
-ADIF output preserves record fields. Cabrillo/EDI output uses common QSO data, not contest-specific
+ADIF output preserves record fields except the printing-only labels. Cabrillo/EDI output uses common QSO data, not contest-specific
 scoring, categories, or equipment details. Missing values stay blank, including EDI `SAntH=`.
 Unknown bands are grouped in a separate EDI file with an empty band header. EDI includes all
 header keys but leaves unknown values and uncomputed scores blank; supplied ADIF serials
@@ -124,15 +137,16 @@ fields:
 
 ## Development
 
-| Command             | Description                       |
-| ------------------- | --------------------------------- |
-| `npm run build`     | Build ESM + CJS bundles and types |
-| `npm run dev`       | Rebuild on change                 |
-| `npm test`          | Run tests (Vitest)                |
-| `npm run coverage`  | Run tests with coverage           |
-| `npm run typecheck` | Type-check with `tsc`             |
-| `npm run lint`      | Lint with ESLint                  |
-| `npm run format`    | Format with Prettier              |
+| Command             | Description                              |
+| ------------------- | ---------------------------------------- |
+| `npm run build`     | Build ESM + CJS bundles and types        |
+| `npm run dev`       | Rebuild on change                        |
+| `npm test`          | Run tests (Vitest)                       |
+| `npm run coverage`  | Run tests with coverage                  |
+| `npm run typecheck` | Type-check with `tsc`                    |
+| `npm run lint`      | Lint with ESLint                         |
+| `npm run format`    | Format with Prettier                     |
+| `npm version patch` | Bump the version and update `CHANGES.md` |
 
 ## License
 

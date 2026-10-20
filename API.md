@@ -11,6 +11,7 @@ import {
   parseTemplate,
   selectFields,
   serializeLog,
+  sortLog,
   supportedLogFormats,
   TemplateError,
 } from 'hamlogparse4print';
@@ -41,6 +42,28 @@ Union of the supported format names: `'adif' | 'cabrillo' | 'edi'`.
 
 `Record<string, string>`. Record keys are field names (usually ADIF-style,
 uppercase); values are strings. No fixed set of fields is required.
+
+Parsed records also include these nonstandard, printing-only fields:
+
+| Field          | Meaning                                                                                                                                                                |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FREQ_BAND`    | Nominal transmit band label with units, such as `136 kHz`, `14 MHz`, `432 MHz`, or `1.3 GHz`. Present on every parsed QSO; empty when the band cannot be resolved.     |
+| `FREQ_BAND_RX` | Equivalent receive band label. Generated only when `BAND_RX` or `FREQ_RX` is present, including an empty source field. Empty when the receive band cannot be resolved. |
+
+Labels use the existing band table, converting nominal frequencies below 1 MHz
+to kHz. They describe the band, not the precise operating frequency or a
+mode-specific nominal frequency: 2 m FM is labeled `144 MHz` even if `FREQ` is
+`145.5`. A recognized band takes precedence over frequency; otherwise frequency
+in MHz is used to identify the band. Receive labels use only receive fields and
+never fall back to transmit fields.
+For 70cm, `FREQ_BAND` and a derived `FREQ` use 432 MHz, while EDI files retain
+the standard `PBand=435 MHz` value.
+
+These fields are recomputed during parsing; supplied printing labels do not
+override the derived values. They appear in `selectFields` results and can be
+used in label templates. The host application decides whether to use or ignore
+them. Both fields are omitted from all serialized log formats, including ADIF,
+without generating dropped-field warnings.
 
 ### `ParsedLog`
 
@@ -115,6 +138,50 @@ Parses the log and returns the sorted, unique field names present across its
 QSO records. It accepts the same input and optional format as `parseLog`, and
 propagates its errors.
 
+## Sorting logs
+
+### `sortLog(log, field, direction?)`
+
+```ts
+function sortLog(log: ParsedLog, field: string, direction?: SortDirection): ParsedLog;
+
+type SortDirection = 'asc' | 'desc';
+```
+
+Returns a new log object with a new, sorted records array. The original log and
+records array are not modified. Individual records and metadata are shared with
+the input, not deep-copied. The input format and metadata are preserved.
+
+`field` is trimmed and uppercased before looking up record keys, so `'call'`
+selects `CALL`. Arbitrary field names are supported. `direction` defaults to
+`'asc'`; use `'desc'` to reverse the ordering of non-empty values.
+
+- `BAND` values recognized by the existing band parser sort by increasing radio
+  frequency, not wavelength or alphabetical order: `80m`, `40m`, `20m`, `2m`,
+  `70cm`. Numeric MHz and MHz/GHz band representations are also recognized.
+  Unrecognized band values sort alphabetically after recognized bands in ascending
+  order (before them in descending order).
+- For other fields, finite decimal numeric values sort numerically. Numbers sort
+  before text in ascending order and after text in descending order. Leading
+  zeroes do not change a numeric value.
+- Text sorts case-insensitively using uppercase string comparison, without
+  locale-specific collation. Callsigns are sorted alphabetically, not by their
+  embedded callsign district numbers.
+- Surrounding whitespace is ignored for comparisons; stored values are unchanged.
+- Missing, empty, and whitespace-only values always sort last in either direction.
+- Equal values retain their input order. If the field is absent throughout the
+  log, the record order is unchanged. Empty logs are accepted.
+
+Throws `Error` for an empty field name or an unsupported sort direction. Sorting
+does not parse or validate record contents; parse raw input with `parseLog` first.
+Use `serializeLog` to write the sorted records back to a supported log format.
+
+```ts
+const sorted = sortLog(parseLog(text), 'CALL');
+const byBandDescending = sortLog(sorted, 'BAND', 'desc');
+const output = serializeLog(byBandDescending, 'adif');
+```
+
 ## Serializing logs
 
 ### `serializeLog(log, format)`
@@ -137,7 +204,8 @@ Warnings are unique strings.
 
 Format behavior and limitations:
 
-- **ADIF:** Returns one `.adi` file. Record fields are written as length-
+- **ADIF:** Returns one `.adi` file. Except for the printing-only `FREQ_BAND`
+  and `FREQ_BAND_RX` fields, record fields are written as length-
   delimited tags, preserving arbitrary field names and values. Tags with empty
   values are omitted; each record ends with `<EOR>`.
 - **Cabrillo:** Returns one `.cbr` file using the generic fixed-width exchange
@@ -340,5 +408,5 @@ The package exports these types from its root entry point:
 
 `GridLayout`, `Insets`, `LabelLayout`, `LabelSize`, `LabelTemplate`,
 `LogInput`, `LogRecord`, `PaperSettings`, `PaperTemplate`, `ParsedLog`,
-`SerializedLog`, `SerializedLogFile`, `SupportedLogFormat`, `TemplateInput`,
+`SerializedLog`, `SerializedLogFile`, `SortDirection`, `SupportedLogFormat`, `TemplateInput`,
 `TemplateItem`, and `TemplateLayout`, as well as `NormalizedTemplate`.

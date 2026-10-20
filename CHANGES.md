@@ -1,7 +1,15 @@
 # Changes
 
-## Unreleased - 2026-10-16
+## Unreleased - 2026-10-20
 
+- Use 432 MHz for 70cm printing labels and derived frequencies, while retaining
+  the EDI-standard 435 MHz band value.
+- Added printing-only `FREQ_BAND` labels to every parsed QSO and `FREQ_BAND_RX`
+  when receive band or frequency fields are present. Labels use kHz, MHz, or GHz
+  and are omitted from serialized log files.
+- Added `sortLog` to sort parsed logs by a specified field, with ascending or
+  descending order, frequency-aware band sorting, numeric comparisons, and stable
+  ordering without modifying the input.
 - Added [API.md](./API.md), a complete reference for the package's public
   functions, types, parsing and serialization behavior, and template API.
 - Added a link to the API reference in the README.

@@ -1,5 +1,6 @@
 export { parseLog, selectFields } from './logs';
 export { serializeLog } from './serialize';
+export { sortLog } from './sort';
 export {
   createTemplateLayout,
   normalizeTemplate,
@@ -19,6 +20,7 @@ export type {
   ParsedLog,
   SerializedLog,
   SerializedLogFile,
+  SortDirection,
   PaperTemplate,
   PaperSettings,
   SupportedLogFormat,

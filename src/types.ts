@@ -3,6 +3,7 @@ export const supportedLogFormats = ['adif', 'cabrillo', 'edi'] as const;
 export type SupportedLogFormat = (typeof supportedLogFormats)[number];
 export type LogInput = string | Uint8Array;
 export type LogRecord = Record<string, string>;
+export type SortDirection = 'asc' | 'desc';
 
 export interface ParsedLog {
   format: SupportedLogFormat;

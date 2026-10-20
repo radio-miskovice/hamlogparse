@@ -46,10 +46,19 @@ export function bandNamed(value: string): Band | undefined {
   return bands.find(({ name }) => name === value.toLowerCase());
 }
 
+export function printingBand(band: string | undefined, frequency: string | undefined): string {
+  const resolved = ediBand(band?.trim() ?? '') ?? bandAt(Number(frequency));
+  if (!resolved) return '';
+  if (resolved.name === '70cm') return '432 MHz';
+  const mhz = Number(ediFrequencyMhz(resolved.edi));
+  return mhz < 1 ? `${mhz * 1000} kHz` : resolved.edi;
+}
+
 export function bandFrequencyMhz(band: Band, mode = ''): string {
   const normalizedMode = mode.trim().toUpperCase();
   if (band.name === '80m') return ['SSB', 'LSB', 'USB'].includes(normalizedMode) ? '3.7' : '3.5';
   if (band.name === '2m' && normalizedMode === 'FM') return '145';
+  if (band.name === '70cm') return '432';
 
   const match = /^(\d+(?:\.\d+)?)\s*(MHz|GHz)$/i.exec(band.edi);
   if (!match) throw new Error(`Invalid nominal frequency for band "${band.name}".`);
